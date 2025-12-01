@@ -7,8 +7,8 @@ const { exec } = require('child_process');
 const app = express();
 const PORT = 3001;
 
-// VULNERABILITY 1: Weak JWT Secret
-const JWT_SECRET = 'secret'; // Sangat lemah dan mudah ditebak
+const JWT_SECRET = 'my-super-secret-key-12345';
+// const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
 
 app.use(cors());
 app.use(express.json());
@@ -47,8 +47,8 @@ app.post('/api/login', async (req, res) => {
         username: user.username, 
         role: user.role 
       }, 
-      JWT_SECRET // Secret yang sangat lemah
-      // Tidak ada expiration time
+      JWT_SECRET
+      // { expiresIn: '1h' }
     );
     
     res.json({ 
@@ -76,7 +76,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Middleware untuk verifikasi token (dengan kerentanan)
+// Middleware untuk verifikasi token
 const verifyToken = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   
@@ -85,12 +85,10 @@ const verifyToken = (req, res, next) => {
   }
   
   try {
-    // VULNERABILITY: Tidak ada algoritma verification yang proper
-    const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256', 'none'] });
+    const decoded = jwt.verify(token, JWT_SECRET); // kurang verifikasi signature
     req.user = decoded;
     next();
   } catch (error) {
-    // VULNERABILITY: Error handling yang buruk, bisa expose information
     res.status(401).json({ message: 'Invalid token', error: error.message });
   }
 };
