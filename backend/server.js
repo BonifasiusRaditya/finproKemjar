@@ -3,52 +3,60 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
 const { exec } = require('child_process');
+const { Pool } = require('pg');
+const crypto = require('crypto');
 
+require('dotenv').config();
 const app = express();
 const PORT = 3001;
 
-const JWT_SECRET = 'my-super-secret-key-12345';
-// const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
+// Use strong secret for production, fallback for development
+// const JWT_SECRET = crypto.randomBytes(64).toString('hex');
+
+// Quick setup for development - replace with strong secret later
+const JWT_SECRET = process.env.JWT;
+
+const pool = new Pool({
+  connectionString: process.env.API_NEON,
+  ssl: {
+    require: true,
+    rejectUnauthorized: false
+  }
+});
 
 app.use(cors());
 app.use(express.json());
 
-// Database palsu untuk demo
-const users = [
-  {
-    id: 1,
-    username: 'admin',
-    password: '$2b$10$rOq3.5Z9t6X8QGQ3Z8X8Q.8X8Q3Z8X8Q3Z8X8Q3Z8X8Q3Z8X8Q3Z8Q', // password: admin123
-    role: 'admin'
-  },
-  {
-    id: 2,
-    username: 'user',
-    password: '$2b$10$8X8Q3Z8X8Q3Z8X8Q3Z8X8Q.8X8Q3Z8X8Q3Z8X8Q3Z8X8Q3Z8X8Q3Z8X', // password: user123
-    role: 'user'
-  }
-];
-
-// Endpoint login dengan JWT lemah
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   
-  const user = users.find(u => u.username === username);
-  if (!user) {
-    return res.status(401).json({ message: 'Invalid credentials' });
-  }
-  
-  // Untuk demo, kita akan menerima password sederhana
-  if (username === 'admin' && password === 'admin123') {
-    // VULNERABILITY: JWT tanpa expiration dan secret lemah
+  try {
+    const query = `SELECT id, username, password_hash, role FROM users WHERE username = '${username}'`;
+    const result = await pool.query(query);
+    
+    if (result.rows.length === 0) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+    
+    const user = result.rows[0];
+    
+    // Verify password using PostgreSQL crypt function
+    const passwordQuery = `SELECT (password_hash = crypt('${password}', password_hash)) as password_match FROM users WHERE username = '${username}'`;
+    const passwordResult = await pool.query(passwordQuery);
+    
+    if (!passwordResult.rows[0]?.password_match) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
     const token = jwt.sign(
       { 
         id: user.id, 
         username: user.username, 
         role: user.role 
       }, 
-      JWT_SECRET
-      // { expiresIn: '1h' }
+      JWT_SECRET,
+      { algorithm: 'HS256' } // TODO: Add expiration in production
+      //{ algorithm: 'HS256', expiresIn: '1h' }
     );
     
     res.json({ 
@@ -56,27 +64,13 @@ app.post('/api/login', async (req, res) => {
       token,
       user: { id: user.id, username: user.username, role: user.role }
     });
-  } else if (username === 'user' && password === 'user123') {
-    const token = jwt.sign(
-      { 
-        id: user.id, 
-        username: user.username, 
-        role: user.role 
-      }, 
-      JWT_SECRET
-    );
     
-    res.json({ 
-      message: 'Login successful', 
-      token,
-      user: { id: user.id, username: user.username, role: user.role }
-    });
-  } else {
-    res.status(401).json({ message: 'Invalid credentials' });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ message: 'Database error', error: error.message });
   }
 });
 
-// Middleware untuk verifikasi token
 const verifyToken = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   
@@ -85,7 +79,7 @@ const verifyToken = (req, res, next) => {
   }
   
   try {
-    const decoded = jwt.verify(token, JWT_SECRET); // kurang verifikasi signature
+    const decoded = jwt.verify(token, JWT_SECRET, {algorithms: ['HS256']});
     req.user = decoded;
     next();
   } catch (error) {
@@ -93,7 +87,7 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-// VULNERABILITY 2: Command Injection
+// Network connectivity testing endpoint
 app.post('/api/ping', verifyToken, (req, res) => {
   const { host } = req.body;
   
@@ -101,8 +95,10 @@ app.post('/api/ping', verifyToken, (req, res) => {
     return res.status(400).json({ message: 'Host parameter required' });
   }
   
-  // VULNERABILITY: Command injection - tidak ada sanitasi input
-  const command = `ping -c 4 ${host}`;
+  // Simple ping implementation for network diagnostics
+  // Cross-platform ping command
+  const isWindows = process.platform === 'win32';
+  const command = isWindows ? `ping -n 4 ${host}` : `ping -c 4 ${host}`;
   
   exec(command, (error, stdout, stderr) => {
     if (error) {
@@ -120,7 +116,7 @@ app.post('/api/ping', verifyToken, (req, res) => {
   });
 });
 
-// VULNERABILITY 3: Command Injection pada sistem info
+// System information and diagnostics endpoint
 app.post('/api/system-info', verifyToken, (req, res) => {
   const { command } = req.body;
   
@@ -128,7 +124,7 @@ app.post('/api/system-info', verifyToken, (req, res) => {
     return res.status(400).json({ message: 'Command parameter required' });
   }
   
-  // VULNERABILITY: Langsung eksekusi command tanpa validasi
+  // Execute system diagnostic commands for troubleshooting
   exec(command, (error, stdout, stderr) => {
     res.json({
       command: command,
@@ -140,31 +136,38 @@ app.post('/api/system-info', verifyToken, (req, res) => {
 });
 
 // Endpoint untuk mendapatkan profile user
-app.get('/api/profile', verifyToken, (req, res) => {
-  const user = users.find(u => u.id === req.user.id);
-  if (!user) {
-    return res.status(404).json({ message: 'User not found' });
+app.get('/api/profile', verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, username, role FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ message: 'Database error' });
   }
-  
-  res.json({
-    id: user.id,
-    username: user.username,
-    role: user.role
-  });
 });
 
-// Endpoint admin only (dengan JWT verification yang lemah)
-app.get('/api/admin/users', verifyToken, (req, res) => {
-  // VULNERABILITY: Tidak ada proper role checking
+// Admin endpoint for user management
+app.get('/api/admin/users', verifyToken, async (req, res) => {
+  // Check admin privileges
   if (req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Admin access required' });
   }
   
-  res.json(users.map(u => ({
-    id: u.id,
-    username: u.username,
-    role: u.role
-  })));
+  try {
+    const result = await pool.query('SELECT id, username, role FROM users');
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ message: 'Database error' });
+  }
 });
 
 app.get('/', (req, res) => {
