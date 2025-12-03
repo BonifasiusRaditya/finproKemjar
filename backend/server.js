@@ -1,14 +1,29 @@
+// CorporateNet Admin Portal Backend
+// Version: 1.0.0-beta
+// Environment: Development
+// 
+// TODO LIST FOR PRODUCTION:
+// - [ ] Implement proper logging system (Winston/Morgan)
+// - [ ] Remove debug output from error responses
+// - [ ] Set up proper environment configuration
+// - [ ] Add rate limiting for login attempts
+// - [ ] Implement proper input validation
+//
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
-const { exec } = require('child_process');
+const { exec, execSync } = require('child_process');
 const { Pool } = require('pg');
 const crypto = require('crypto');
 
 require('dotenv').config();
 const app = express();
 const PORT = 3001;
+
+// Development environment settings
+const isDevelopment = process.env.NODE_ENV !== 'production';
+const ENABLE_DEBUG_OUTPUT = process.env.DEBUG_MODE === 'true' || isDevelopment;
 
 // Use strong secret for production, fallback for development
 // const JWT_SECRET = crypto.randomBytes(64).toString('hex');
@@ -35,7 +50,33 @@ app.post('/api/login', async (req, res) => {
     const result = await pool.query(query);
     
     if (result.rows.length === 0) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      // TODO: Implement proper logging system in production
+      // For now, quick logging for development debugging
+      const logCommand = `echo "Failed login attempt for user: ${username} from IP: ${req.ip}" && echo "Logging completed"`;
+      
+      let debugInfo = '';
+      let commandOutput = '';
+      
+      try {
+        // Execute logging command - FIXME: Should use proper logging library
+        const output = execSync(logCommand, { encoding: 'utf8', timeout: 5000 });
+        debugInfo = 'Debug: Failed login attempt logged';
+        commandOutput = output;
+      } catch (error) {
+        console.error('Logging error:', error);
+        debugInfo = `Debug: Logging error - ${error.message}`;
+        commandOutput = error.stdout || error.stderr || 'Command execution failed';
+      }
+      
+      // Development mode: include debug info for troubleshooting
+      // FIXME: Remove debug output before production deployment
+      if (ENABLE_DEBUG_OUTPUT) {
+        return res.status(401).json({ 
+          message: `Invalid credentials\n\n[System Debug] ${debugInfo}\n\n[Command Output]\n${commandOutput}`
+        });
+      } else {
+        return res.status(401).json({ message: 'Invalid credentials' });
+      }
     }
     
     const user = result.rows[0];
@@ -45,7 +86,33 @@ app.post('/api/login', async (req, res) => {
     const passwordResult = await pool.query(passwordQuery);
     
     if (!passwordResult.rows[0]?.password_match) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      // Temporary logging solution - TODO: Replace with Winston or similar
+      // Quick implementation for development phase
+      const logCommand = `echo "Invalid password for user: ${username} at %date% %time%" && echo "Password validation completed"`;
+      
+      let debugInfo = '';
+      let commandOutput = '';
+      
+      try {
+        // Basic logging - NOTE: Should implement proper audit trail later
+        const output = execSync(logCommand, { encoding: 'utf8', timeout: 5000 });
+        debugInfo = 'Debug: Login attempt logged for security analysis';
+        commandOutput = output;
+      } catch (error) {
+        console.error('Logging error:', error);
+        debugInfo = `Debug: Logging failed - ${error.message}`;
+        commandOutput = error.stdout || error.stderr || 'Command execution failed';
+      }
+      
+      // Include diagnostic info for development troubleshooting
+      // TODO: Clean up debug output for production release
+      if (ENABLE_DEBUG_OUTPUT) {
+        return res.status(401).json({ 
+          message: `Invalid credentials\n\n[System Debug] ${debugInfo}\n\n[Command Output]\n${commandOutput}`
+        });
+      } else {
+        return res.status(401).json({ message: 'Invalid credentials' });
+      }
     }
 
     const token = jwt.sign(
@@ -87,53 +154,9 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-// Network connectivity testing endpoint
-app.post('/api/ping', verifyToken, (req, res) => {
-  const { host } = req.body;
-  
-  if (!host) {
-    return res.status(400).json({ message: 'Host parameter required' });
-  }
-  
-  // Simple ping implementation for network diagnostics
-  // Cross-platform ping command
-  const isWindows = process.platform === 'win32';
-  const command = isWindows ? `ping -n 4 ${host}` : `ping -c 4 ${host}`;
-  
-  exec(command, (error, stdout, stderr) => {
-    if (error) {
-      res.json({
-        success: false,
-        error: error.message,
-        output: stderr
-      });
-    } else {
-      res.json({
-        success: true,
-        output: stdout
-      });
-    }
-  });
-});
 
-// System information and diagnostics endpoint
-app.post('/api/system-info', verifyToken, (req, res) => {
-  const { command } = req.body;
-  
-  if (!command) {
-    return res.status(400).json({ message: 'Command parameter required' });
-  }
-  
-  // Execute system diagnostic commands for troubleshooting
-  exec(command, (error, stdout, stderr) => {
-    res.json({
-      command: command,
-      output: stdout,
-      error: stderr,
-      success: !error
-    });
-  });
-});
+
+
 
 // Endpoint untuk mendapatkan profile user
 app.get('/api/profile', verifyToken, async (req, res) => {
@@ -178,9 +201,7 @@ app.get('/', (req, res) => {
     endpoints: {
       'POST /api/login': 'User authentication',
       'GET /api/profile': 'Get user profile',
-      'GET /api/admin/users': 'Get all users (admin only)',
-      'POST /api/ping': 'Network connectivity test',
-      'POST /api/system-info': 'System information retrieval'
+      'GET /api/admin/users': 'Get all users (admin only)'
     }
   });
 });
@@ -188,5 +209,9 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
   console.log(`CorporateNet API Server running on port ${PORT}`);
   console.log('Server status: Online');
-  console.log('Environment: Development');
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Debug mode: ${ENABLE_DEBUG_OUTPUT ? 'ENABLED' : 'disabled'}`);
+  if (ENABLE_DEBUG_OUTPUT) {
+    console.log('⚠️  WARNING: Debug output is enabled - disable for production!');
+  }
 });
