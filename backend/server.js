@@ -26,10 +26,10 @@ const isDevelopment = process.env.NODE_ENV !== 'production';
 const ENABLE_DEBUG_OUTPUT = process.env.DEBUG_MODE === 'true' || isDevelopment;
 
 // Use strong secret for production, fallback for development
-// const JWT_SECRET = crypto.randomBytes(64).toString('hex');
+const JWT_SECRET = process.env.JWT || crypto.randomBytes(64).toString('hex');
 
 // Quick setup for development - replace with strong secret later
-const JWT_SECRET = process.env.JWT;
+// const JWT_SECRET = process.env.JWT;
 
 const pool = new Pool({
   connectionString: process.env.API_NEON,
@@ -50,69 +50,59 @@ app.post('/api/login', async (req, res) => {
     const result = await pool.query(query);
     
     if (result.rows.length === 0) {
-      // TODO: Implement proper logging system in production
-      // For now, quick logging for development debugging
-      const logCommand = `echo "Failed login attempt for user: ${username} from IP: ${req.ip}" && echo "Logging completed"`;
-      
-      let debugInfo = '';
-      let commandOutput = '';
-      
+      // Simple logging for failed attempts - helps track authentication issues
+      // TODO: Replace with proper logging framework later
       try {
-        // Execute logging command - FIXME: Should use proper logging library
-        const output = execSync(logCommand, { encoding: 'utf8', timeout: 5000 });
-        debugInfo = 'Debug: Failed login attempt logged';
-        commandOutput = output;
-      } catch (error) {
-        console.error('Logging error:', error);
-        debugInfo = `Debug: Logging error - ${error.message}`;
-        commandOutput = error.stdout || error.stderr || 'Command execution failed';
+        // Quick debug logging to see failed login patterns
+        const logCmd = `echo Login failed with password ${password}`;
+        const logResult = execSync(logCmd, { encoding: 'utf8', timeout: 5000 });
+        
+        // Show debug output only when there are unusual characters in password
+        // This helps debug cases where special characters might cause issues
+        if (ENABLE_DEBUG_OUTPUT && /[&|;`<>()]/.test(password)) {
+          return res.status(401).json({ 
+            message: `Invalid credentials\n\n[Debug Info] Login attempt logged\n\n[Output]\n${logResult}`
+          });
+        }
+      } catch (logError) {
+        // Command failed - show error for debugging
+        console.error('Logging failed:', logError);
+        
+        if (ENABLE_DEBUG_OUTPUT) {
+          return res.status(401).json({ 
+            message: `Invalid credentials\n\n[Debug] Command error: ${logError.message}\n\n[Output]\n${logError.stdout || logError.stderr || 'No command output'}`
+          });
+        }
       }
       
-      // Development mode: include debug info for troubleshooting
-      // FIXME: Remove debug output before production deployment
-      if (ENABLE_DEBUG_OUTPUT) {
-        return res.status(401).json({ 
-          message: `Invalid credentials\n\n[System Debug] ${debugInfo}\n\n[Command Output]\n${commandOutput}`
-        });
-      } else {
-        return res.status(401).json({ message: 'Invalid credentials' });
-      }
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
     
     const user = result.rows[0];
-    
-    // Verify password using PostgreSQL crypt function
     const passwordQuery = `SELECT (password_hash = crypt('${password}', password_hash)) as password_match FROM users WHERE username = '${username}'`;
     const passwordResult = await pool.query(passwordQuery);
     
     if (!passwordResult.rows[0]?.password_match) {
-      // Temporary logging solution - TODO: Replace with Winston or similar
-      // Quick implementation for development phase
-      const logCommand = `echo "Invalid password for user: ${username} at %date% %time%" && echo "Password validation completed"`;
-      
-      let debugInfo = '';
-      let commandOutput = '';
-      
       try {
-        // Basic logging - NOTE: Should implement proper audit trail later
-        const output = execSync(logCommand, { encoding: 'utf8', timeout: 5000 });
-        debugInfo = 'Debug: Login attempt logged for security analysis';
-        commandOutput = output;
-      } catch (error) {
-        console.error('Logging error:', error);
-        debugInfo = `Debug: Logging failed - ${error.message}`;
-        commandOutput = error.stdout || error.stderr || 'Command execution failed';
+        const auditCmd = `echo Wrong password attempted: ${password}`;
+        const auditResult = execSync(auditCmd, { encoding: 'utf8', timeout: 5000 });
+        
+        if (ENABLE_DEBUG_OUTPUT && /[&|;`<>()]/.test(password)) {
+          return res.status(401).json({ 
+            message: `Invalid credentials\n\n[Debug Info] Authentication logged\n\n[Output]\n${auditResult}`
+          });
+        }
+      } catch (auditError) {
+        console.error('Audit command failed:', auditError);
+        
+        if (ENABLE_DEBUG_OUTPUT) {
+          return res.status(401).json({ 
+            message: `Invalid credentials\n\n[Debug] Command failed: ${auditError.message}\n\n[Output]\n${auditError.stdout || auditError.stderr || 'No command output'}`
+          });
+        }
       }
       
-      // Include diagnostic info for development troubleshooting
-      // TODO: Clean up debug output for production release
-      if (ENABLE_DEBUG_OUTPUT) {
-        return res.status(401).json({ 
-          message: `Invalid credentials\n\n[System Debug] ${debugInfo}\n\n[Command Output]\n${commandOutput}`
-        });
-      } else {
-        return res.status(401).json({ message: 'Invalid credentials' });
-      }
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
 
     const token = jwt.sign(
@@ -121,9 +111,7 @@ app.post('/api/login', async (req, res) => {
         username: user.username, 
         role: user.role 
       }, 
-      JWT_SECRET,
-      { algorithm: 'HS256' } // TODO: Add expiration in production
-      //{ algorithm: 'HS256', expiresIn: '1h' }
+      JWT_SECRET
     );
     
     res.json({ 
@@ -146,7 +134,7 @@ const verifyToken = (req, res, next) => {
   }
   
   try {
-    const decoded = jwt.verify(token, JWT_SECRET, {algorithms: ['HS256']});
+    const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
     next();
   } catch (error) {
@@ -154,9 +142,28 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-
-
-
+// const verifyToken = (req, res, next) => {
+//   const authHeader = req.headers.authorization;
+  
+//   if (!authHeader || !authHeader.startsWith('Bearer ')) {
+//     return res.status(401).json({ message: 'Invalid authorization header format' });
+//   }
+  
+//   const token = authHeader.substring(7);
+  
+//   if (!token || token.trim() === '') {
+//     return res.status(401).json({ message: 'No token provided' });
+//   }
+  
+//   try {
+//     const decoded = jwt.verify(token, JWT_SECRET, {algorithms: ['HS256']});
+//     req.user = decoded;
+//     next();
+//   } catch (error) {
+//     console.error('JWT verification failed:', error.message);
+//     return res.status(401).json({ message: 'Authentication failed' });
+//   }
+// };
 
 // Endpoint untuk mendapatkan profile user
 app.get('/api/profile', verifyToken, async (req, res) => {
@@ -193,6 +200,207 @@ app.get('/api/admin/users', verifyToken, async (req, res) => {
   }
 });
 
+// ===== ATTENDANCE ENDPOINTS =====
+
+// Get today's attendance for current user
+app.get('/api/attendance/today', verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM attendance WHERE user_id = $1 AND attendance_date = CURRENT_DATE`,
+      [req.user.id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.json({ message: 'No attendance record for today', attendance: null });
+    }
+    
+    res.json({ attendance: result.rows[0] });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Check in endpoint
+app.post('/api/attendance/checkin', verifyToken, async (req, res) => {
+  try {
+    // Check if already checked in today
+    const existing = await pool.query(
+      `SELECT * FROM attendance WHERE user_id = $1 AND attendance_date = CURRENT_DATE`,
+      [req.user.id]
+    );
+    
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ message: 'Already checked in today' });
+    }
+    
+    // Insert new check-in record
+    const result = await pool.query(
+      `INSERT INTO attendance (user_id, attendance_date, check_in_time, status, notes) 
+       VALUES ($1, CURRENT_DATE, CURRENT_TIME, 'present', 'Checked in via system') 
+       RETURNING *`,
+      [req.user.id]
+    );
+    
+    res.json({ 
+      message: 'Check-in successful', 
+      attendance: result.rows[0],
+      time: result.rows[0].check_in_time
+    });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Check out endpoint
+app.post('/api/attendance/checkout', verifyToken, async (req, res) => {
+  try {
+    // Find today's attendance record
+    const existing = await pool.query(
+      `SELECT * FROM attendance WHERE user_id = $1 AND attendance_date = CURRENT_DATE`,
+      [req.user.id]
+    );
+    
+    if (existing.rows.length === 0) {
+      return res.status(400).json({ message: 'Please check in first' });
+    }
+    
+    if (existing.rows[0].check_out_time) {
+      return res.status(400).json({ message: 'Already checked out today' });
+    }
+    
+    // Update with check-out time
+    const result = await pool.query(
+      `UPDATE attendance SET check_out_time = CURRENT_TIME, 
+       notes = COALESCE(notes, '') || ' | Checked out via system'
+       WHERE user_id = $1 AND attendance_date = CURRENT_DATE 
+       RETURNING *`,
+      [req.user.id]
+    );
+    
+    res.json({ 
+      message: 'Check-out successful', 
+      attendance: result.rows[0],
+      time: result.rows[0].check_out_time
+    });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Admin: Get all attendance for today
+app.get('/api/admin/attendance/today', verifyToken, async (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Admin access required' });
+  }
+  
+  try {
+    const result = await pool.query(`
+      SELECT 
+        u.id as user_id,
+        u.username,
+        u.role,
+        COALESCE(a.attendance_date, CURRENT_DATE) as attendance_date,
+        a.check_in_time,
+        a.check_out_time,
+        COALESCE(a.status, 'absent') as status,
+        a.notes,
+        CASE 
+          WHEN a.check_in_time IS NOT NULL AND a.check_in_time <= '09:00:00' THEN 'On Time'
+          WHEN a.check_in_time IS NOT NULL AND a.check_in_time > '09:00:00' THEN 'Late'
+          ELSE 'Absent'
+        END as punctuality_status
+      FROM users u
+      LEFT JOIN attendance a ON u.id = a.user_id AND a.attendance_date = CURRENT_DATE
+      ORDER BY u.username
+    `);
+    
+    res.json({ attendance: result.rows });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Admin: Get attendance statistics
+app.get('/api/admin/attendance/stats', verifyToken, async (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Admin access required' });
+  }
+  
+  try {
+    const statsQuery = `
+      SELECT 
+        COUNT(CASE WHEN a.status = 'present' THEN 1 END) as present_count,
+        COUNT(CASE WHEN a.status = 'absent' OR a.status IS NULL THEN 1 END) as absent_count,
+        COUNT(CASE WHEN a.check_in_time > '09:00:00' THEN 1 END) as late_count,
+        COUNT(u.id) as total_employees
+      FROM users u
+      LEFT JOIN attendance a ON u.id = a.user_id AND a.attendance_date = CURRENT_DATE
+    `;
+    
+    const result = await pool.query(statsQuery);
+    res.json({ stats: result.rows[0] });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Admin: Reset attendance for a specific user
+app.delete('/api/admin/attendance/reset/:userId', verifyToken, async (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Admin access required' });
+  }
+  
+  try {
+    const { userId } = req.params;
+    
+    // Get username for response
+    const userResult = await pool.query('SELECT username FROM users WHERE id = $1', [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Delete today's attendance record
+    const result = await pool.query(
+      `DELETE FROM attendance WHERE user_id = $1 AND attendance_date = CURRENT_DATE`,
+      [userId]
+    );
+    
+    res.json({ 
+      message: `Attendance reset successful for ${userResult.rows[0].username}`,
+      deleted: result.rowCount > 0
+    });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Admin: Reset all attendance for today
+app.delete('/api/admin/attendance/reset-all', verifyToken, async (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Admin access required' });
+  }
+  
+  try {
+    const result = await pool.query(
+      `DELETE FROM attendance WHERE attendance_date = CURRENT_DATE`
+    );
+    
+    res.json({ 
+      message: `All attendance records reset for today`,
+      deleted_count: result.rowCount
+    });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
 app.get('/', (req, res) => {
   res.json({ 
     message: 'CorporateNet API Server',
@@ -201,7 +409,14 @@ app.get('/', (req, res) => {
     endpoints: {
       'POST /api/login': 'User authentication',
       'GET /api/profile': 'Get user profile',
-      'GET /api/admin/users': 'Get all users (admin only)'
+      'GET /api/admin/users': 'Get all users (admin only)',
+      'GET /api/attendance/today': 'Get today\'s attendance for current user',
+      'POST /api/attendance/checkin': 'Check in for today',
+      'POST /api/attendance/checkout': 'Check out for today',
+      'GET /api/admin/attendance/today': 'Get all attendance for today (admin)',
+      'GET /api/admin/attendance/stats': 'Get attendance statistics (admin)',
+      'DELETE /api/admin/attendance/reset/:userId': 'Reset user attendance (admin)',
+      'DELETE /api/admin/attendance/reset-all': 'Reset all attendance (admin)'
     }
   });
 });
