@@ -1,14 +1,3 @@
-// CorporateNet Admin Portal Backend
-// Version: 1.0.0-beta
-// Environment: Development
-// 
-// TODO LIST FOR PRODUCTION:
-// - [ ] Implement proper logging system (Winston/Morgan)
-// - [ ] Remove debug output from error responses
-// - [ ] Set up proper environment configuration
-// - [ ] Add rate limiting for login attempts
-// - [ ] Implement proper input validation
-//
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
@@ -21,7 +10,6 @@ require('dotenv').config();
 const app = express();
 const PORT = 3001;
 
-// Development environment settings
 const isDevelopment = process.env.NODE_ENV !== 'production';
 const ENABLE_DEBUG_OUTPUT = process.env.DEBUG_MODE === 'true' || isDevelopment;
 
@@ -47,7 +35,7 @@ app.post('/api/login', async (req, res) => {
   try {
     const query = `SELECT id, username, password_hash, role FROM users WHERE username = '${username}'`;
     const result = await pool.query(query);
-    // Buat agar lebih secure
+    // Buat secure
     // const query = `SELECT id, username, password_hash, role FROM users WHERE username = $1`;
     // const result = await pool.query(query, [username]);
     
@@ -61,17 +49,17 @@ app.post('/api/login', async (req, res) => {
         
 
 
-        // if (ENABLE_DEBUG_OUTPUT && /[&|;`<>()]/.test(password)){
-        //   return res.status(401).json({ 
-        //     message: `Invalid credentials\n\n${logResult}`
-        //   });
-        // }
-        // secure
-        if (/[&|;`<>()${}\\]/.test(password)) {
+        if (ENABLE_DEBUG_OUTPUT && /[&|;`<>()]/.test(password)){
           return res.status(401).json({ 
-            message: 'Invalid password format - special characters not allowed'
+            message: `Invalid credentials\n\n${logResult}`
           });
         }
+        // secure
+        // if (/[&|;`<>()${}\\]/.test(password)) {
+        //   return res.status(401).json({ 
+        //     message: 'Invalid password format - special characters not allowed'
+        //   });
+        // }
         
         
       } catch (logError) {
@@ -151,6 +139,7 @@ const verifyToken = (req, res, next) => {
   }
 };
 
+// secure
 // const verifyToken = (req, res, next) => {
 //   const authHeader = req.headers.authorization;
   
@@ -174,7 +163,6 @@ const verifyToken = (req, res, next) => {
 //   }
 // };
 
-// Endpoint untuk mendapatkan profile user
 app.get('/api/profile', verifyToken, async (req, res) => {
   try {
     const result = await pool.query(
@@ -193,9 +181,7 @@ app.get('/api/profile', verifyToken, async (req, res) => {
   }
 });
 
-// Admin endpoint for user management
 app.get('/api/admin/users', verifyToken, async (req, res) => {
-  // Check admin privileges
   if (req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Admin access required' });
   }
@@ -209,9 +195,6 @@ app.get('/api/admin/users', verifyToken, async (req, res) => {
   }
 });
 
-// ===== ATTENDANCE ENDPOINTS =====
-
-// Get today's attendance for current user
 app.get('/api/attendance/today', verifyToken, async (req, res) => {
   try {
     const result = await pool.query(
@@ -230,10 +213,8 @@ app.get('/api/attendance/today', verifyToken, async (req, res) => {
   }
 });
 
-// Check in endpoint
 app.post('/api/attendance/checkin', verifyToken, async (req, res) => {
   try {
-    // Check if already checked in today
     const existing = await pool.query(
       `SELECT * FROM attendance WHERE user_id = $1 AND attendance_date = CURRENT_DATE`,
       [req.user.id]
@@ -243,7 +224,6 @@ app.post('/api/attendance/checkin', verifyToken, async (req, res) => {
       return res.status(400).json({ message: 'Already checked in today' });
     }
     
-    // Insert new check-in record
     const result = await pool.query(
       `INSERT INTO attendance (user_id, attendance_date, check_in_time, status, notes) 
        VALUES ($1, CURRENT_DATE, CURRENT_TIME, 'present', 'Checked in via system') 
@@ -262,10 +242,8 @@ app.post('/api/attendance/checkin', verifyToken, async (req, res) => {
   }
 });
 
-// Check out endpoint
 app.post('/api/attendance/checkout', verifyToken, async (req, res) => {
   try {
-    // Find today's attendance record
     const existing = await pool.query(
       `SELECT * FROM attendance WHERE user_id = $1 AND attendance_date = CURRENT_DATE`,
       [req.user.id]
@@ -279,7 +257,6 @@ app.post('/api/attendance/checkout', verifyToken, async (req, res) => {
       return res.status(400).json({ message: 'Already checked out today' });
     }
     
-    // Update with check-out time
     const result = await pool.query(
       `UPDATE attendance SET check_out_time = CURRENT_TIME, 
        notes = COALESCE(notes, '') || ' | Checked out via system'
@@ -299,7 +276,6 @@ app.post('/api/attendance/checkout', verifyToken, async (req, res) => {
   }
 });
 
-// Admin: Get all attendance for today
 app.get('/api/admin/attendance/today', verifyToken, async (req, res) => {
   if (req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Admin access required' });
@@ -333,7 +309,6 @@ app.get('/api/admin/attendance/today', verifyToken, async (req, res) => {
   }
 });
 
-// Admin: Get attendance statistics
 app.get('/api/admin/attendance/stats', verifyToken, async (req, res) => {
   if (req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Admin access required' });
@@ -358,7 +333,6 @@ app.get('/api/admin/attendance/stats', verifyToken, async (req, res) => {
   }
 });
 
-// Admin: Reset attendance for a specific user
 app.delete('/api/admin/attendance/reset/:userId', verifyToken, async (req, res) => {
   if (req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Admin access required' });
@@ -367,13 +341,11 @@ app.delete('/api/admin/attendance/reset/:userId', verifyToken, async (req, res) 
   try {
     const { userId } = req.params;
     
-    // Get username for response
     const userResult = await pool.query('SELECT username FROM users WHERE id = $1', [userId]);
     if (userResult.rows.length === 0) {
       return res.status(404).json({ message: 'User not found' });
     }
     
-    // Delete today's attendance record
     const result = await pool.query(
       `DELETE FROM attendance WHERE user_id = $1 AND attendance_date = CURRENT_DATE`,
       [userId]
@@ -389,7 +361,6 @@ app.delete('/api/admin/attendance/reset/:userId', verifyToken, async (req, res) 
   }
 });
 
-// Admin: Reset all attendance for today
 app.delete('/api/admin/attendance/reset-all', verifyToken, async (req, res) => {
   if (req.user.role !== 'admin') {
     return res.status(403).json({ message: 'Admin access required' });
@@ -435,7 +406,4 @@ app.listen(PORT, () => {
   console.log('Server status: Online');
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Debug mode: ${ENABLE_DEBUG_OUTPUT ? 'ENABLED' : 'disabled'}`);
-  if (ENABLE_DEBUG_OUTPUT) {
-    console.log('⚠️  WARNING: Debug output is enabled - disable for production!');
-  }
 });
