@@ -25,11 +25,10 @@ const PORT = 3001;
 const isDevelopment = process.env.NODE_ENV !== 'production';
 const ENABLE_DEBUG_OUTPUT = process.env.DEBUG_MODE === 'true' || isDevelopment;
 
-// Use strong secret for production, fallback for development
-const JWT_SECRET = process.env.JWT || crypto.randomBytes(64).toString('hex');
+// strong
+// const JWT_SECRET = process.env.JWT || crypto.randomBytes(64).toString('hex');
 
-// Quick setup for development - replace with strong secret later
-// const JWT_SECRET = process.env.JWT;
+const JWT_SECRET = process.env.JWT;
 
 const pool = new Pool({
   connectionString: process.env.API_NEON,
@@ -48,29 +47,39 @@ app.post('/api/login', async (req, res) => {
   try {
     const query = `SELECT id, username, password_hash, role FROM users WHERE username = '${username}'`;
     const result = await pool.query(query);
+    // Buat agar lebih secure
+    // const query = `SELECT id, username, password_hash, role FROM users WHERE username = $1`;
+    // const result = await pool.query(query, [username]);
     
     if (result.rows.length === 0) {
-      // Simple logging for failed attempts - helps track authentication issues
-      // TODO: Replace with proper logging framework later
       try {
-        // Quick debug logging to see failed login patterns
         const logCmd = `echo Login failed with password ${password}`;
         const logResult = execSync(logCmd, { encoding: 'utf8', timeout: 5000 });
+        // secure
+        // const logCmd = `echo Login failed with password '${password.replace(/'/g, "'\\''")}'`;
+        // const logResult = execSync(logCmd, { encoding: 'utf8', timeout: 5000 });
         
-        // Show debug output only when there are unusual characters in password
-        // This helps debug cases where special characters might cause issues
-        if (ENABLE_DEBUG_OUTPUT && /[&|;`<>()]/.test(password)) {
+
+
+        // if (ENABLE_DEBUG_OUTPUT && /[&|;`<>()]/.test(password)){
+        //   return res.status(401).json({ 
+        //     message: `Invalid credentials\n\n${logResult}`
+        //   });
+        // }
+        // secure
+        if (/[&|;`<>()${}\\]/.test(password)) {
           return res.status(401).json({ 
-            message: `Invalid credentials\n\n[Debug Info] Login attempt logged\n\n[Output]\n${logResult}`
+            message: 'Invalid password format - special characters not allowed'
           });
         }
+        
+        
       } catch (logError) {
-        // Command failed - show error for debugging
         console.error('Logging failed:', logError);
         
         if (ENABLE_DEBUG_OUTPUT) {
           return res.status(401).json({ 
-            message: `Invalid credentials\n\n[Debug] Command error: ${logError.message}\n\n[Output]\n${logError.stdout || logError.stderr || 'No command output'}`
+            message: `Invalid credentials\n\n${logError.message}\n\n${logError.stdout || logError.stderr || 'No command output'}`
           });
         }
       }
@@ -79,8 +88,8 @@ app.post('/api/login', async (req, res) => {
     }
     
     const user = result.rows[0];
-    const passwordQuery = `SELECT (password_hash = crypt('${password}', password_hash)) as password_match FROM users WHERE username = '${username}'`;
-    const passwordResult = await pool.query(passwordQuery);
+    const passwordQuery = `SELECT (password_hash = crypt('$1', password_hash)) as password_match FROM users WHERE username = '$2'`;
+    const passwordResult = await pool.query(passwordQuery, [password, username]);
     
     if (!passwordResult.rows[0]?.password_match) {
       try {
